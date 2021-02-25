@@ -531,7 +531,17 @@ def sample_loop(
 
     _, unravel_fn = get_unravel_fn()
 
-    with tqdm(rng_keys, unit="samples") as progress:
+    # We count the number of divergences. This will need to be abstracted
+    # when we start including algorithms that are not in the HMC family.
+    num_divergences = jnp.zeros(num_chains)
+
+    def update_divergences(info, num_divergences):
+        is_divergent = info.is_divergent.astype(int)
+        num_divergences = num_divergences + is_divergent
+        max_num_divergences = jnp.max(num_divergences)
+        return num_divergences, max_num_divergences
+
+    with tqdm(rng_keys, unit="samples", mininterval=0.5) as progress:
         progress.set_description(
             f"Collecting {num_samples:,} samples across {num_chains:,} chains",
             refresh=False,
@@ -540,8 +550,12 @@ def sample_loop(
         state = init_state
         try:
             for _, key in enumerate(progress):
-                state, _, ravelled_state = update_loop(state, key)
+                state, info, ravelled_state = update_loop(state, key)
                 chain.append(ravelled_state)
+                num_divergences, max_num_divergences = update_divergences(
+                    info, num_divergences
+                )
+                progress.set_postfix({"divergences": f"{max_num_divergences:0.0f}"})
         except KeyboardInterrupt:
             pass
 
